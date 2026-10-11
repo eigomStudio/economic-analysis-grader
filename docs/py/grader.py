@@ -1,4 +1,4 @@
-"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-12b(ローカル専用・外部通信なし)。
+"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-12e(ローカル専用・外部通信なし)。
 使い方: python3 grader.py          → フォルダ選択ダイアログが開く(採点 → 採点結果.xlsx)
         python3 grader.py --export  → 確認・修正済みの採点結果.xlsx から、Canvas取り込み用CSVを作る
         python3 grader.py 提出フォルダ [--ref 模範解答フォルダ] [--out 出力先]   → 引数で直接指定
@@ -13,7 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import column_index_from_string as ci, get_column_letter as gl
 
 # ───────── 共通部品 ─────────
-GRADER_VERSION = "2026-10-12b"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
+GRADER_VERSION = "2026-10-12e"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
 FINAL = "最終評価(修正可)"
 COMMENT_COL = "学生向けコメント(修正可)"
 DEFAULT_POINTS = {"S": 4, "A": 3, "B": 2, "C": 1, "D": 0}   # Canvas点数。「Canvas対応表」シートで変更できる
@@ -502,11 +502,15 @@ def prepare_export(a):
         r = r + [""] * (len(head) - len(r))
         (students if any(r[i].strip() for i in ident[1:]) else meta).append(r)
     out_rows, used, unmatched = [], set(), []
+    idc = head.index("ID") if "ID" in head else None
     for d in items:
         sid, nm = nrm(d.get("学生番号")), nname(d.get("氏名"))
         m = None
-        if sid: m = next((k for k, r in enumerate(students) if k not in used and any(sid in nrm(r[i]) for i in ident[1:])), None)
-        if m is None and nm: m = next((k for k, r in enumerate(students) if k not in used and nname(r[0]) == nm), None)
+        cu = re.search(r"_(?:LATE_)?(\d{3,})_\d{3,}_", str(d.get("ファイル") or ""))     # Canvasの一括ダウンロードのファイル名「氏名_ユーザーID_提出ID_元の名前」
+        if cu and idc is not None: m = next((k for k, r in enumerate(students) if k not in used and r[idc].strip() == cu.group(1)), None)
+        sp = re.compile(rf"(?<![0-9A-Z]){re.escape(sid)}(?![0-9])") if sid else None     # 学生番号(「B03経済01経済-24AK000 山田 太郎」のように氏名の列に入っていてもよい)
+        if m is None and sp: m = next((k for k, r in enumerate(students) if k not in used and any(sp.search(nrm(r[i])) for i in ident)), None)
+        if m is None and nm: m = next((k for k, r in enumerate(students) if k not in used and nname(r[0]).endswith(nm)), None)
         if m is None: unmatched.append(d); continue
         used.add(m); out_rows.append((m, d))
     return dict(res=res, hd=hd, pts=pts, items=items, skipped=skipped, chs=chs, head=head, bom=bom, col=col,
@@ -574,6 +578,11 @@ def post_feedback(a):
         todo = [t for t in todo if nname(a.only) in nname(t[1].get("氏名")) or nrm(a.only) in nrm(t[1].get("学生番号"))]
     if a.limit: todo = todo[: a.limit]
     print(f"課題: {head[col]} / コース {course} / 送信対象 {len(todo)} 人(送信済みでスキップ {already} 人)")
+    print(f"  採点結果の学生 {len(c['items']) + len(c['skipped'])} 人 → 評価がS〜D {len(c['items'])} 人 → Canvasの成績表と照合できた {len(out_rows)} 人(成績表CSVの学生 {len(students)} 人)")
+    if c["unmatched"] and not out_rows: print(f"  成績表CSVの見出し(学生を見分ける列): {[head[i] for i in c['ident']]}")
+    if c["skipped"]: print(f"  評価がS〜Dでないため対象外: {len(c['skipped'])} 人(評価の内訳: {dict(Counter(d['_g'] or '空欄' for d in c['skipped']))})")
+    if c["unmatched"]: print(f"  Canvasの成績表と照合できなかった学生: {len(c['unmatched'])} 人(学生番号の例: {', '.join(str(d.get('学生番号') or '空欄') for d in c['unmatched'][:3])})")
+    if a.only and not todo: print(f"  --only {a.only} に一致する学生がいません")
     for uid, d, sig in todo[:3]:
         print(f"  例) 学生ID {uid}: 点数 {sig['grade']} / コメント: {sig['comment'][:60].replace(chr(10), ' ')}")
     if not a.send:
