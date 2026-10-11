@@ -1,0 +1,10 @@
+# 学生のファイルや採点結果を、誤ってGitHubに上げないための除外
+.DS_Store
+*.xlsx
+*.xls
+*.csv
+canvas_sent_*.json
+out/
+.venv/
+salt.txt
+__pycache__/

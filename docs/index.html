@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Economic Analysis Grader(経済分析入門 章末課題 採点ツール)</title>
+<style>
+  body { font-family: "Meiryo", "Hiragino Sans", sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; line-height: 1.7; color: #222; }
+  h1 { font-size: 1.4rem; } fieldset { border: 1px solid #bbb; margin: 1rem 0; padding: .6rem 1rem; }
+  legend { font-weight: bold; } .note { background: #eef5ff; border: 1px solid #b9d4f5; padding: .6rem 1rem; border-radius: 6px; }
+  button, .btn { font-size: 1rem; padding: .5rem 1.2rem; } #status { margin: 1rem 0; font-weight: bold; }
+  table { border-collapse: collapse; } th, td { border: 1px solid #bbb; padding: .2rem .8rem; text-align: center; }
+  .small { font-size: .9rem; color: #555; } a.btn { display: inline-block; background: #1f3864; color: #fff; text-decoration: none; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Eco-Analysis Grader</h1>
+<p class="small">経済分析入門 章末課題 採点ツール(ブラウザ版)</p>
+<p class="note">選んだファイルは<b>このPC / Mac の中だけで処理</b>されます。インターネット上のサーバーには送信されません。<br>
+<span class="small">※フォルダやファイルを選ぶとき、ブラウザの確認画面に「アップロード」と表示されることがありますが、これはブラウザがファイル選択のときに必ず使う決まった表現です。実際には、ファイルはどこにも送信されません。
+<details><summary class="small">本当に送信されていないことを確認するには</summary>
+<span class="small">採点の前に、キーボードのF12キー(Macは Option+Command+I)で開発者ツールを開き、「ネットワーク」のタブを表示してください。「採点する」を押しても、通信の一覧が増えなければ、ファイルは外に出ていません(ページを開いたときの、プログラムの読み込みの通信だけが表示されます)。</span></details></span></p>
+
+<fieldset>
+  <legend>1. 提出ファイルを選ぶ(Canvasからダウンロードしたもの)</legend>
+  <p>フォルダごと: <input type="file" id="folder" webkitdirectory multiple></p>
+  <p>ファイルを個別に(.xlsx、またはCanvasのZIPのまま): <input type="file" id="files" accept=".xlsx,.zip" multiple></p>
+  <p class="small" id="selected">ファイルが選ばれていません</p>
+</fieldset>
+<fieldset>
+  <legend>2. 任意の設定</legend>
+  <p>模範解答のExcel(なくても動きます): <input type="file" id="ref" accept=".xlsx"></p>
+  <p>課題の章番号(ファイル名から分かるときは空欄でかまいません): <input type="number" id="chapter" min="1" max="30" style="width:5rem"></p>
+</fieldset>
+
+<p><button id="run">採点する</button></p>
+<div id="status">採点の準備をしています(初回は約14MBを読み込むため、少し時間がかかります)…</div>
+
+<div id="result" hidden>
+  <div id="summary"></div>
+  <p><a id="download" class="btn" href="#">結果のExcelをダウンロード</a></p>
+  <p class="small">ダウンロードした「採点結果」で、「最終評価」と「学生向けコメント」を確認・修正してください。</p>
+  <pre id="log" class="small"></pre>
+</div>
+
+<p class="small" id="version"></p>
+<script>
+// 画面のプログラム(app.js)が動かない場合の見張り。ファイルを直接開いたとき、古いブラウザのとき、読み込みに失敗したときに、理由を表示する。
+(function () {
+  var fileMsg = location.protocol === "file:"
+    ? "エラー: このページは、ファイルを直接開くと動きません。README.mdの「自分のパソコンで試す」の手順で、http://localhost:8000/ から開くか、公開されたURL(https://…)から開いてください。" : null;
+  function show(t) {
+    var s = document.getElementById("status"); if (s) s.textContent = t;
+    var b = document.getElementById("run"); if (b) b.disabled = true;
+  }
+  document.addEventListener("DOMContentLoaded", function () { if (fileMsg) show(fileMsg); });
+  window.addEventListener("load", function () {
+    setTimeout(function () {
+      if (!window.__ecoApp) show(fileMsg || "エラー: 画面のプログラム(app.js)が動いていません。ブラウザが古いか、読み込みに失敗しています。最新のChrome、Edge、Safariで、公開されたURLから開いてください。");
+    }, 3000);
+  });
+})();
+</script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
