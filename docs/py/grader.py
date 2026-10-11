@@ -1,4 +1,4 @@
-"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-11b(ローカル専用・外部通信なし)。
+"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-12b(ローカル専用・外部通信なし)。
 使い方: python3 grader.py          → フォルダ選択ダイアログが開く(採点 → 採点結果.xlsx)
         python3 grader.py --export  → 確認・修正済みの採点結果.xlsx から、Canvas取り込み用CSVを作る
         python3 grader.py 提出フォルダ [--ref 模範解答フォルダ] [--out 出力先]   → 引数で直接指定
@@ -13,7 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import column_index_from_string as ci, get_column_letter as gl
 
 # ───────── 共通部品 ─────────
-GRADER_VERSION = "2026-10-11b"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
+GRADER_VERSION = "2026-10-12b"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
 FINAL = "最終評価(修正可)"
 COMMENT_COL = "学生向けコメント(修正可)"
 DEFAULT_POINTS = {"S": 4, "A": 3, "B": 2, "C": 1, "D": 0}   # Canvas点数。「Canvas対応表」シートで変更できる
@@ -69,6 +69,22 @@ def textboxes(path):
                     if t.strip(): out.append(t.strip())
     return "\n".join(out)
 
+def cell_essay(ws, h=None):
+    """セルに書かれた考察の文章。元データ(1〜12行目のA列・タイトル)、表の項目名・表頭、単位・出所の記載は除く。"""
+    skip = {norm_label(ws.cell(r, 1).value) for r in range(1, 13)} - {""}
+    side = {r for r, _ in table_rows(ws, h)} if h else set()      # 表の行(表側の項目名がある行)
+    out = []
+    for row in ws.iter_rows():
+        for c in row:
+            v = c.value
+            if not isinstance(v, str) or v.startswith("="): continue
+            t = norm_label(v)
+            if len(t) < 2 or t in skip or re.match(r"(単位|出所|出典|資料|注)", t) or re.fullmatch(r"[\d.,%年()()~〜-]+", t): continue
+            if c.row <= 12 and c.column == 1: continue
+            if h and c.column == 1 and (h - 3 <= c.row <= h or c.row in side) and "。" not in t: continue     # 表のタイトル・表頭・表側(表の下の行は考察として読む。「。」があれば考察とみなす)
+            out.append(v.strip())
+    return "\n".join(out)
+
 def judge_essay(text, chapter):                 # ローカルLLM(MLX)に差し替える場所。None=未判定
     return None
 
@@ -76,9 +92,9 @@ def judge_essay(text, chapter):                 # ローカルLLM(MLX)に差し�
 LABELS.update({
  "C1_NO_TABLE": "構成比の表が見つからない/未完成", "C1_HARDCODED": "数式を使わず数値を入力している",
  "C1_NO_ABS_REF": "絶対セル参照を使っていない", "C1_PARTIAL_ABS_REF": "一部の行で絶対セル参照が使われていない(注意のみ・減点なし)", "C1_WRONG_ABS_REF": "絶対セル参照の付け方が誤り($B$4型など)",
- "C1_WRONG_VALUE": "構成比の値/式が誤り(絶対参照以外)", "C1_SUM_TRAP": "雇用者と内訳を合計している(ひっかけ)",
+ "C1_WRONG_VALUE": "構成比の値/式が誤り(絶対参照以外)", "C1_WRONG_NUM": "分子のセル参照が誤り(行のずれなど)", "C1_SUM_TRAP": "雇用者と内訳を合計している(ひっかけ)",
  "C1_INCOMPLETE": "表に不足している行・空欄がある", "C1_FMT": "表示形式が適切でない(パーセントスタイル、または小数点第1位までの数値)", "C1_NO_UNIT": "「単位」の記載がない(注意のみ)", "C1_NO_TITLE": "表のタイトルがない(注意のみ)", "C1_NO_HEADER": "表頭(年)が不足している(注意のみ)", "C1_NO_SIDEHEAD": "表側(項目名)が入力されていない行がある(注意のみ)",
- "C1_SRC_MODIFIED": "元データを書き換えている", "C1_NO_ESSAY": "考察がない", "C1_SHORT_ESSAY": "考察が短い(内容を要確認)", "C1_TERM": "用語の使い分けを要確認(割合に増加/減少)",
+ "C1_SRC_MODIFIED": "元データを書き換えている", "C1_NO_ESSAY": "考察がない", "C1_ESSAY_IN_CELL": "考察をテキストボックスでなくセルに書いている(注意のみ)", "C1_SHORT_ESSAY": "考察が短い(注意のみ・減点なし)", "C1_TERM": "用語の使い分けを要確認(割合に増加/減少)",
  "C1_MULTI_SHEET": "シートが複数ある", "C1_EMPTY_REF": "元データのない行(空のセル)を参照して、0%などになっている行がある(注意のみ)", "C1_PARTIAL_HARD": "100%の行(雇用者)を数式でなく手入力している(注意のみ・採点には影響しない)"})
 COMMENTS.update({
  "C1_NO_TABLE": "構成比の表が見つかりませんでした。「被雇用者の雇用形態別構成比」の表を作成してください。",
@@ -87,6 +103,7 @@ COMMENTS.update({
  "C1_NO_ABS_REF": "分母の「雇用者(役員を除く)」に絶対参照(行を固定する $ 、例: B$4)を使うと、1つの式をコピーするだけで全体を計算できます。",
  "C1_PARTIAL_ABS_REF": "一部の行で絶対参照が使われていません。分母を B$4 のように行固定にして、全ての行で同じ式をコピーできるようにしましょう。",
  "C1_WRONG_ABS_REF": "絶対参照の付け方が違うため、一部のセルで構成比が正しく計算されていません。分母は「同じ年(列)の雇用者数」なので、行だけを固定します(B$4)。",
+ "C1_WRONG_NUM": "分子のセルがずれているため、構成比が正しく計算されていません。分子は同じ行の項目の人数です(例: 正規の職員・従業員の行なら B5)。100%の行も確認しましょう。",
  "C1_WRONG_VALUE": "構成比の式を確認してください。分子は各雇用形態の人数、分母は同じ年の「雇用者(役員を除く)」です。",
  "C1_SUM_TRAP": "「雇用者(役員を除く)」は全体で、他の項目はその内訳です。内訳と足し合わせないよう注意しましょう。",
  "C1_INCOMPLETE": "表に不足している行や空欄があります。元の表と同じ項目を、すべて入力しましょう。",
@@ -98,25 +115,27 @@ COMMENTS.update({
  "C1_FMT": "構成比の表示形式を、パーセントスタイル(小数点第1位まで)、または小数点第1位までの数値にそろえましょう。",
  "C1_SRC_MODIFIED": "元のデータが書き換えられているようです。元データは変更しないでください。",
  "C1_NO_ESSAY": "考察が書かれていません。計算結果から読み取れる近年の雇用形態の変化を、テキストボックスにまとめましょう。",
- "C1_SHORT_ESSAY": "考察が短めです。正規・非正規の全体の動きと、内訳(パート、アルバイトなど)の変化にも触れてみましょう。",
+ "C1_ESSAY_IN_CELL": "考察はセルではなく、テキストボックスに書きましょう(今回はセルの文章を考察として評価しています)。",
+ "C1_SHORT_ESSAY": "考察をもう少し詳しく書いてみましょう。正規・非正規の全体の動きに加えて、内訳(パート、アルバイトなど)の変化にも触れると、さらに良い考察になります。",
  "C1_TERM": "割合の変化には「上昇・低下」、人数の変化には「増加・減少」を使い分けましょう。",
  "C1_MULTI_SHEET": "提出するシートは、課題のシート1枚だけにしましょう。"})
 PAT1 = re.compile(r'^=\s*(\$?)([A-Z]{1,2})(\$?)(\d+)\s*/\s*(\$?)([A-Z]{1,2})(\$?)(\d+)\s*$')
 SUMRNG = re.compile(r'SUM\(\s*\$?([A-Z]{1,2})\$?(\d+)\s*:\s*\$?([A-Z]{1,2})\$?(\d+)\s*\)')
-COLS1, N_ROWS1, MIN_ESSAY1 = range(2, 25), 8, 100
-MIN_ESSAY_NONE = 10          # これ未満は「考察なし」、MIN_ESSAY1未満は「考察が短い(不十分)」
+COLS1, SRC_ROWS1, MIN_ESSAY1 = range(2, 25), range(4, 11), 100      # 元データは4〜10行目(雇用者〜その他)
+MIN_ESSAY_NONE = 10          # これ未満は「考察なし」、MIN_ESSAY1未満は「考察が短い」(改行・空白は数えない)
+SHORT_ESSAY_PENALTY = False   # 課題1では、短い考察は減点しない(Sのまま、詳しく書くよう促すコメントだけ付ける)
 HAND_TYPED_MAX = 0            # 表の中の手入力の数値(数式でないセル)がこの個数を超えると「式なし」=D。授業の方針は「手入力はD」なので0。ただし100%の行(雇用者)だけの手入力は許容し、注意のみ
 VALUE_NG_RATIO = 0.05         # 数式セルのうち、計算結果が違うセルの割合がこれを超えると「値誤り」(0.05=約1行でも誤りがあれば。1行までなら許容する場合は0.13程度)
 ABS_OK_RATIO = 0.75          # 数式セルのうち、これ以上で絶対参照を使っていれば「使用」とみなす(全部でなければ注意のみ・減点なし)
 CHECK_FMT = True             # 表示形式: パーセントスタイル、または小数点第1位までの数値ならOK(違っても減点せず注意のみ)
-ROWNAMES1 = ["雇用者(100%)", "正規", "パート", "アルバイト", "派遣", "契約・嘱託", "その他", "非正規"]
+ROWNAMES1 = ["雇用者(100%)", "正規", "パート", "アルバイト", "派遣", "契約・嘱託", "その他"]
 
 def val_ok(vv, exp):
     """セルの値が期待値(構成比)と合っているか。Trueで一致、Falseで不一致、Noneで判定不能(未計算など)。"""
     if not isinstance(vv, (int, float)) or isinstance(vv, bool) or exp is None: return None
     return abs(vv - exp) <= 0.0006 or abs(vv - exp * 100) <= 0.06       # 割合のまま/百分率(*100)のどちらもよい。四捨五入の差は許容
 
-def classify1(cell, c, src_row, sumrng, vv=None, exp=None):
+def classify1(cell, c, src_row, vv=None, exp=None):
     v = cell.value
     if isinstance(v, (int, float)) and not isinstance(v, bool):          # 手入力の数値
         return "hard_wrong" if val_ok(v, exp) is False else "hard"
@@ -132,24 +151,21 @@ def classify1(cell, c, src_row, sumrng, vv=None, exp=None):
     k = "other"
     if m:
         _, nc, _, nr, d1, dc, d2, dr = m.groups()
-        if ci(nc) == c and int(nr) == src_row and ci(dc) == c and int(dr) == 4:
+        n1 = m.group(1)
+        num_ok, den_ok = ci(nc) == c and int(nr) == src_row, ci(dc) == c and int(dr) == 4
+        if num_ok and den_ok:
             k = "ok_abs" if (d2 and not d1) else "ok_rel"
+        elif not num_ok and not (int(nr) == src_row and n1):     # 分子が別の行・別の列(行のずれなど)。$B5 のような列固定は絶対参照の誤りとして扱う
+            k = "wrong_num_abs" if (not den_ok and d1) else "wrong_num"
         else:
             k = "wrong_abs" if (d1 or d2) else "wrong"
-    elif src_row == 11 and sumrng:                # 非正規の行は、内訳の構成比の合計(SUM)でもよい
-        s_ = SUMRNG.search(v.upper())
-        if s_ and ci(s_.group(1)) == c == ci(s_.group(3)) and (int(s_.group(2)), int(s_.group(4))) == sumrng:
-            k = "ok_sum"
     ok = val_ok(vv, exp)                          # 計算済みの値があれば、実際の計算結果も照合する
-    if k in ("ok_abs", "ok_rel", "ok_sum") and ok is False: return "badval_abs" if k == "ok_abs" else "badval_rel"   # 式の形は正しいが、計算結果が違う
+    if k in ("ok_abs", "ok_rel") and ok is False: return "badval_abs" if k == "ok_abs" else "badval_rel"   # 式の形は正しいが、計算結果が違う
     if k == "other" and ok is True: return "ok_valabs" if re.search(r"\$4(?!\d)", f) else "ok_val"   # 見慣れない書き方でも、結果が合っていれば正しい
     return k
 
 def src_value(src, c, sheets):
-    """元データの値。非正規(11行目)は、6〜10行目の合計。"""
-    if src == 11:
-        parts = [src_value(r, c, sheets) for r in range(6, 11)]
-        return sum(parts) if all(p is not None for p in parts) else None
+    """元データの値。"""
     for w in sheets:
         v = w.cell(src, c).value
         if isinstance(v, (int, float)) and not isinstance(v, bool): return v
@@ -178,21 +194,21 @@ def yearish(x):
 def find_header(ws):                            # 年(2002, 2003…)が並ぶ表頭の行。元データ(1〜12行目)より下で探す
     for r in range(13, 61):
         if yearish(ws.cell(r, 2).value) and yearish(ws.cell(r, 3).value): return r
-    labels = {norm_label(ws.cell(r, 1).value) for r in range(4, 12)} - {""}     # 表頭がない答案: 表側の項目名から表を探す
+    labels = {norm_label(ws.cell(r, 1).value) for r in SRC_ROWS1} - {""}     # 表頭がない答案: 表側の項目名から表を探す
     for r in range(13, 61):
         if resolve_label(ws, ws.cell(r, 1)) in labels: return r - 1
     return None
 
 def table_rows(ws, h):
-    """表頭の下の各行を、元データの行(4〜11)に対応づける。項目名で照合し、できなければ並び順で補う。"""
-    src_labels = {norm_label(ws.cell(r, 1).value): r for r in range(4, 12)}
+    """表頭の下の各行を、元データの行(4〜10)に対応づける。それ以外の行(合計など)は判定しない。項目名で照合し、できなければ並び順で補う。"""
+    src_labels = {norm_label(ws.cell(r, 1).value): r for r in SRC_ROWS1}
     out, used = [], set()
     for k in range(10):
         r = h + 1 + k
         if all(ws.cell(r, c).value is None for c in range(1, 25)): break
         src = src_labels.get(resolve_label(ws, ws.cell(r, 1)))
         if src is None or src in used: src = 4 + k
-        if src > 11 or src in used: continue
+        if src not in SRC_ROWS1 or src in used: continue
         used.add(src); out.append((r, src))
     return out
 
@@ -211,16 +227,18 @@ def check1(path, ref):
     if len(wb.worksheets) > 1: iss.append("C1_MULTI_SHEET")
     h = find_header(ws)                             # タイトルの表記ゆれに左右されないよう、表頭の行から表を見つける
     essay_text = textboxes(path)
-    n_es = len(essay_text)
+    in_cell = cell_essay(ws, h)
+    if len(norm_label(in_cell)) >= MIN_ESSAY_NONE and len(norm_label(essay_text)) < MIN_ESSAY1:   # テキストボックスに十分な考察がなく、セルに文章がある → セルの文章も考察として扱う
+        essay_text = (essay_text + "\n" + in_cell).strip(); iss.append("C1_ESSAY_IN_CELL")
+    n_es = len(norm_label(essay_text))
     if n_es < MIN_ESSAY_NONE: essay = "なし"; iss.append("C1_NO_ESSAY")
-    elif n_es < MIN_ESSAY1: essay = "不十分"; iss.append("C1_SHORT_ESSAY")
+    elif n_es < MIN_ESSAY1: essay = "不十分" if SHORT_ESSAY_PENALTY else "妥当"; iss.append("C1_SHORT_ESSAY")
     else: essay = judge_essay(essay_text, 1) or "妥当"
     if h is None:
         return "評価外", iss + ["C1_NO_TABLE"], {}
     cnt, fmt_ok, hard_rows, rel_rows = Counter(), 0, [], []
     trs = table_rows(ws, h)
     row_of = {src: r for r, src in trs}
-    sumrng = (row_of[6], row_of[10]) if 6 in row_of and 10 in row_of else None
     sheets = ([load_workbook(ref, data_only=True).worksheets[0]] if ref else []) + [ws, wsv]   # 期待値の元データ(模範解答があればそれを優先)
     for r, src in trs:
         row_hard = row_rel = 0
@@ -228,7 +246,7 @@ def check1(path, ref):
             cell = ws.cell(r, c)
             num, den = src_value(src, c, sheets), src_value(4, c, sheets)
             exp = num / den if num is not None and den else None
-            k = classify1(cell, c, src, sumrng, wsv.cell(r, c).value, exp)
+            k = classify1(cell, c, src, wsv.cell(r, c).value, exp)
             if src == 4 and k == "hard": k = "hard100"              # 100%の行の手入力は許容(値が合っていれば注意のみ)
             elif src == 4 and k == "hard_wrong": k = "wrong100"     # 値が違えば、手入力ではなく「計算結果の誤り」
             if k in ("badval_abs", "badval_rel") and ws.cell(src, c).value is None:     # 元データのない(空の)セルを参照した式 → 計算の誤りではなく注意のみ
@@ -238,24 +256,26 @@ def check1(path, ref):
             fmt_ok += cell.value is not None and fmt_good(cell.number_format)
         if row_hard >= len(COLS1) / 2: hard_rows.append(ROWNAMES1[src - 4])
         if row_rel >= len(COLS1) / 2: rel_rows.append(ROWNAMES1[src - 4])
-    cnt["empty"] += (N_ROWS1 - len(trs)) * len(COLS1)      # 表にない行は空欄として数える
-    total = N_ROWS1 * len(COLS1)
+    missing = [r for r in SRC_ROWS1 if r not in row_of]
+    cnt["empty"] += len(missing) * len(COLS1)               # 表にない行は空欄として数える
+    total = len(SRC_ROWS1) * len(COLS1)
     if (total - cnt["empty"]) / total < 0.2:        # 表の2割未満しか埋まっていなければ「表なし」扱い
         return "評価外", iss + ["C1_NO_TABLE"], dict(cnt)
     if cnt["empty"]: iss.append("C1_INCOMPLETE")
     filled = total - cnt["empty"]
     handtyped = cnt["hard"] + cnt["hard_wrong"]
-    fcells = sum(cnt[k] for k in ("ok_abs", "ok_rel", "ok_sum", "ok_val", "ok_valabs", "emptyref_abs", "emptyref_rel", "badval_abs", "badval_rel", "wrong", "wrong_abs", "other"))   # 数式が入っているセル
-    bad = cnt["wrong"] + cnt["wrong_abs"] + cnt["other"] + cnt["hard_wrong"] + cnt["wrong100"] + cnt["badval_abs"] + cnt["badval_rel"]
+    fcells = sum(cnt[k] for k in ("ok_abs", "ok_rel", "ok_val", "ok_valabs", "emptyref_abs", "emptyref_rel", "badval_abs", "badval_rel", "wrong", "wrong_abs", "wrong_num", "wrong_num_abs", "other"))   # 数式が入っているセル
+    bad = cnt["wrong"] + cnt["wrong_abs"] + cnt["wrong_num"] + cnt["wrong_num_abs"] + cnt["other"] + cnt["hard_wrong"] + cnt["wrong100"] + cnt["badval_abs"] + cnt["badval_rel"]
     if handtyped > HAND_TYPED_MAX or handtyped / filled > 0.5:
         calc, abs_ = "式なし", "-"; iss.append("C1_HARDCODED")
     else:
         calc = "値誤り" if bad / max(fcells + cnt["hard_wrong"] + cnt["wrong100"], 1) > VALUE_NG_RATIO else "正"
-        abs_ratio = (cnt["ok_abs"] + cnt["ok_valabs"] + cnt["badval_abs"] + cnt["emptyref_abs"]) / max(fcells - cnt["ok_sum"], 1)
+        abs_ratio = (cnt["ok_abs"] + cnt["ok_valabs"] + cnt["badval_abs"] + cnt["emptyref_abs"]) / max(fcells, 1)
         abs_ = "使用" if abs_ratio >= ABS_OK_RATIO else "不使用"
-        if cnt["wrong_abs"]: iss.append("C1_WRONG_ABS_REF")
+        if cnt["wrong_abs"] + cnt["wrong_num_abs"]: iss.append("C1_WRONG_ABS_REF")
         elif abs_ == "不使用": iss.append("C1_NO_ABS_REF")
         elif abs_ratio < 0.999: iss.append("C1_PARTIAL_ABS_REF")     # ほとんどで使っている → 注意のみ
+        if cnt["wrong_num"] + cnt["wrong_num_abs"]: iss.append("C1_WRONG_NUM")
         if cnt["wrong"] + cnt["other"] + cnt["hard_wrong"] + cnt["wrong100"] + cnt["badval_abs"] + cnt["badval_rel"]: iss.append("C1_WRONG_VALUE")
         if cnt["emptyref_abs"] + cnt["emptyref_rel"]: iss.append("C1_EMPTY_REF")        # 注意のみ
         if cnt["hard100"] or cnt["wrong100"]: iss.append("C1_PARTIAL_HARD")     # 100%の行の手入力 → 注意のみ
@@ -274,8 +294,8 @@ def check1(path, ref):
         if any(ws.cell(r, c).value != rs.cell(r, c).value for r in range(4, 11) for c in COLS1):
             iss.append("C1_SRC_MODIFIED")
     if re.search(r"(構成比|割合|比率|シェア)[^。、，,]{0,20}(増加|減少|増え|減っ)", essay_text): iss.append("C1_TERM")
-    detail = {f"n_{k}": v for k, v in cnt.items()} | {"考察文字数": len(essay_text), "手入力の行": "、".join(hard_rows), "絶対参照なしの行": "、".join(rel_rows),
-                                                "不足している行": "、".join(ROWNAMES1[k - 4] for k in range(4, 12) if k not in row_of)}
+    detail = {f"n_{k}": v for k, v in cnt.items()} | {"考察文字数": n_es, "手入力の行": "、".join(hard_rows), "絶対参照なしの行": "、".join(rel_rows),
+                                                "不足している行": "、".join(ROWNAMES1[k - 4] for k in missing)}
     return grade1(calc, abs_, essay), iss, detail
 
 # ───────── 章ごとのチェッカー(プラグイン) ─────────
