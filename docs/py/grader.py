@@ -1,4 +1,4 @@
-"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-12f(ローカル専用・外部通信なし)。
+"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-12g(ローカル専用・外部通信なし)。
 使い方: python3 grader.py          → フォルダ選択ダイアログが開く(採点 → 採点結果.xlsx)
         python3 grader.py --export  → 確認・修正済みの採点結果.xlsx から、Canvas取り込み用CSVを作る
         python3 grader.py 提出フォルダ [--ref 模範解答フォルダ] [--out 出力先]   → 引数で直接指定
@@ -13,7 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import column_index_from_string as ci, get_column_letter as gl
 
 # ───────── 共通部品 ─────────
-GRADER_VERSION = "2026-10-12f"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
+GRADER_VERSION = "2026-10-12g"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
 FINAL = "最終評価(修正可)"
 COMMENT_COL = "学生向けコメント(修正可)"
 DEFAULT_POINTS = {"S": 4, "A": 3, "B": 2, "C": 1, "D": 0}   # Canvas点数。「Canvas対応表」シートで変更できる
@@ -484,7 +484,9 @@ def prepare_export(a):
         d = dict(zip(hd, r))
         if not d.get("学生番号") and not d.get("氏名"): continue
         g = str(d.get(FINAL) or "").strip().upper()
-        (items if g in pts else skipped).append(d | {"_g": g})
+        if g in pts: items.append(d | {"_g": g})
+        elif str(d.get(COMMENT_COL) or "").strip() and g in ("評価外", ""): items.append(d | {"_g": None})   # 評価外でもコメントがあれば、コメントだけ送る(点数は付けない)
+        else: skipped.append(d | {"_g": g})
     chs = sorted({d["課題"] for d in items if d.get("課題") not in (None, "")})
     if len(chs) > 1 and not a.chapter: print(f"複数の章({chs})が含まれています。--chapter で章を指定してください"); return
     if a.chapter: items = [d for d in items if d.get("課題") == a.chapter]
@@ -543,6 +545,7 @@ def export_canvas(a):
         w.writerow([head[i] for i in out_cols])
         for r in meta: w.writerow([r[i] for i in out_cols])
         for m, d in sorted(out_rows):
+            if d["_g"] is None: continue                  # コメントのみの学生はCSVに入れない
             row = [students[m][i] for i in out_cols]; row[-1] = d["_g"] if a.letters else pts[d["_g"]]; w.writerow(row)
     print(f"出力: {outp}\n課題列: {head[col]}")
     print(f"出力 {len(out_rows)} 人 / 評価の内訳:", dict(Counter(d["_g"] for _, d in out_rows)))
@@ -578,7 +581,7 @@ def post_feedback(a):
     todo, already = [], 0
     for mi, d in sorted(out_rows):
         uid = students[mi][idcol].strip()
-        val = d["_g"] if a.letters else pts[d["_g"]]
+        val = "" if d["_g"] is None else d["_g"] if a.letters else pts[d["_g"]]
         comment = str(d.get(COMMENT_COL) or "").strip()
         sig = {"grade": str(val), "comment": comment}
         if not a.resend and sent.get(uid) == sig: already += 1; continue
@@ -587,13 +590,16 @@ def post_feedback(a):
         todo = [t for t in todo if nname(a.only) in nname(t[1].get("氏名")) or nrm(a.only) in nrm(t[1].get("学生番号"))]
     if a.limit: todo = todo[: a.limit]
     print(f"課題: {head[col]} / コース {course} / 送信対象 {len(todo)} 人(送信済みでスキップ {already} 人)")
-    print(f"  採点結果の学生 {len(c['items']) + len(c['skipped'])} 人 → 評価がS〜D {len(c['items'])} 人 → Canvasの成績表と照合できた {len(out_rows)} 人(成績表CSVの学生 {len(students)} 人)")
+    nco = sum(d["_g"] is None for d in c["items"])
+    print(f"  採点結果の学生 {len(c['items']) + len(c['skipped'])} 人 → 送る対象 {len(c['items'])} 人(S〜D {len(c['items']) - nco} 人、評価外でコメントのみ {nco} 人) → Canvasの成績表と照合できた {len(out_rows)} 人(成績表CSVの学生 {len(students)} 人)")
     if c["unmatched"] and not out_rows: print(f"  成績表CSVの見出し(学生を見分ける列): {[head[i] for i in c['ident']]}")
     if c["skipped"]: print(f"  評価がS〜Dでないため対象外: {len(c['skipped'])} 人(評価の内訳: {dict(Counter(d['_g'] or '空欄' for d in c['skipped']))})")
     if c["unmatched"]: print(f"  Canvasの成績表と照合できなかった学生: {len(c['unmatched'])} 人(学生番号の例: {', '.join(str(d.get('学生番号') or '空欄') for d in c['unmatched'][:3])})")
     if a.only and not todo: print(f"  --only {a.only} に一致する学生がいません")
     for uid, d, sig in todo[:3]:
-        print(f"  例) 学生ID {uid}: 点数 {sig['grade']} / コメント: {sig['comment'][:60].replace(chr(10), ' ')}")
+        print(f"  例) 学生ID {uid}: 点数 {sig['grade'] or 'なし(コメントのみ)'} / コメント: {sig['comment'][:60].replace(chr(10), ' ')}")
+    for uid, d, sig in todo:
+        if not sig["grade"]: print(f"  コメントのみ) 学生ID {uid}: {sig['comment'][:60].replace(chr(10), ' ')}")
     if not a.send:
         print("(確認のみです。実際に送るには --send を付けてください。成績表の公開設定が手動なら、送信後も学生には見えません)"); return
     if not todo: print("送信する学生がいません"); return
@@ -602,7 +608,7 @@ def post_feedback(a):
     if not token: print("トークンが入力されなかったため中止します"); return
     ok = ng = 0
     for uid, d, sig in todo:
-        body = {"submission[posted_grade]": sig["grade"]}
+        body = {"submission[posted_grade]": sig["grade"]} if sig["grade"] else {}      # 評価外はコメントだけ
         if sig["comment"]: body["comment[text_comment]"] = sig["comment"]
         req = urllib.request.Request(f"{base}/api/v1/courses/{course}/assignments/{aid}/submissions/{uid}",
                                      data=urllib.parse.urlencode(body).encode(), method="PUT",
@@ -651,7 +657,7 @@ def verify_feedback(a):
     res, ng = Counter(), []
     for mi, d in sorted(out_rows):
         uid = students[mi][idcol].strip()
-        val = d["_g"] if a.letters else pts[d["_g"]]
+        val = "" if d["_g"] is None else d["_g"] if a.letters else pts[d["_g"]]
         want = flat(d.get(COMMENT_COL))
         sub = subs.get(uid)
         who = f"{d.get('学生番号') or ''} {d.get('氏名') or ''}".strip()
@@ -660,6 +666,7 @@ def verify_feedback(a):
         got = sub.get("grade") if a.letters else sub.get("score")
         try: same = (str(got) == str(val)) if a.letters else (got is not None and float(got) == float(val))
         except (TypeError, ValueError): same = False
+        if val == "": same = True                          # コメントのみの学生は点数を照合しない
         if not same: why.append(f"点数が違う(期待 {val} / Canvas {got})")
         if want and not any(flat(x.get("comment")) == want for x in sub.get("submission_comments", [])): why.append("コメントが見つからない")
         if why: res["要確認"] += 1; ng.append((who, "、".join(why)))

@@ -11,6 +11,8 @@
   button, .btn { font-size: 1rem; padding: .5rem 1.2rem; } #status { margin: 1rem 0; font-weight: bold; }
   table { border-collapse: collapse; } th, td { border: 1px solid #bbb; padding: .2rem .8rem; text-align: center; }
   .small { font-size: .9rem; color: #555; } a.btn { display: inline-block; background: #1f3864; color: #fff; text-decoration: none; border-radius: 4px; }
+  .pick { display: inline-block; border: 1px solid #888; border-radius: 4px; background: #f3f3f3; padding: .1rem .8rem; cursor: pointer; }
+input.hide { position: absolute; left: -9999px; }
 </style>
 </head>
 <body>
@@ -22,15 +24,15 @@
 <span class="small">採点の前に、キーボードのF12キー(Macは Option+Command+I)で開発者ツールを開き、「ネットワーク」のタブを表示してください。「採点する」を押しても、通信の一覧が増えなければ、ファイルは外に出ていません(ページを開いたときの、プログラムの読み込みの通信だけが表示されます)。</span></details></span></p>
 
 <fieldset>
-  <legend>1. 提出ファイルを選ぶ(Canvasからダウンロードしたもの)</legend>
-  <p>フォルダごと: <input type="file" id="folder" webkitdirectory multiple></p>
-  <p>ファイルを個別に(.xlsx、またはCanvasのZIPのまま): <input type="file" id="files" accept=".xlsx,.zip" multiple></p>
+  <legend>1. 提出ファイルを選ぶ</legend>
+  <p>フォルダごと: <label class="pick" for="folder">フォルダを選択</label><input type="file" id="folder" class="hide" webkitdirectory multiple></p>
+  <p>ファイルを個別に（.xlsx、またはCanvasのZIPのまま）: <label class="pick" for="files">ファイルを選択</label><input type="file" id="files" class="hide" accept=".xlsx,.zip" multiple></p>
   <p class="small" id="selected">ファイルが選ばれていません</p>
 </fieldset>
 <fieldset>
   <legend>2. 任意の設定</legend>
-  <p>模範解答のExcel(なくても動きます): <input type="file" id="ref" accept=".xlsx"></p>
-  <p>課題の章番号(ファイル名から分かるときは空欄でかまいません): <input type="number" id="chapter" min="1" max="30" style="width:5rem"></p>
+  <p>模範解答のExcel（なくても動きます）: <input type="file" id="ref" accept=".xlsx"></p>
+  <p>課題の章番号（ファイル名から分かるときは空欄でかまいません）: <input type="number" id="chapter" min="1" max="30" style="width:5rem"></p>
 </fieldset>
 
 <p><button id="run">採点する</button></p>
