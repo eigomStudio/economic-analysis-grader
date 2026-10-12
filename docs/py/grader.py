@@ -1,4 +1,4 @@
-"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-12e(ローカル専用・外部通信なし)。
+"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-12f(ローカル専用・外部通信なし)。
 使い方: python3 grader.py          → フォルダ選択ダイアログが開く(採点 → 採点結果.xlsx)
         python3 grader.py --export  → 確認・修正済みの採点結果.xlsx から、Canvas取り込み用CSVを作る
         python3 grader.py 提出フォルダ [--ref 模範解答フォルダ] [--out 出力先]   → 引数で直接指定
@@ -13,7 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import column_index_from_string as ci, get_column_letter as gl
 
 # ───────── 共通部品 ─────────
-GRADER_VERSION = "2026-10-12e"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
+GRADER_VERSION = "2026-10-12f"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
 FINAL = "最終評価(修正可)"
 COMMENT_COL = "学生向けコメント(修正可)"
 DEFAULT_POINTS = {"S": 4, "A": 3, "B": 2, "C": 1, "D": 0}   # Canvas点数。「Canvas対応表」シートで変更できる
@@ -24,9 +24,18 @@ COMMENTS = {}                                   # できていない箇所のコ
 def make_comment(codes, grade):
     """できていない箇所のコードから、学生向けコメントの下書きを作る(先生が確認・修正する前提)。"""
     if grade in ("", "評価外", "未対応"): return ""
-    lines = [COMMENTS[c] for c in codes if c in COMMENTS]
+    lines = []
+    for c in codes:                              # 「コード@詳細」の形なら、コメント中の {items} に詳細を入れる(例: どの項目の書式か)
+        base, _, items = c.partition("@")
+        if base in COMMENTS:
+            t = COMMENTS[base]
+            lines.append(t.replace("{items}", items.replace(",", "・")) if items else re.sub(r"\{items\}[のに]?", "", t))
     if not lines: return "よくできています。"
     return "次の点を確認してください。\n" + "\n".join("・" + x for x in lines)
+
+def label_of(c):
+    base, _, items = c.partition("@")
+    return LABELS.get(base, base) + (f"({items.replace(',', '・')})" if items else "")
 
 def checker(n):
     def deco(f): CHECKERS[n] = f; return f
@@ -304,7 +313,7 @@ def load_plugins():
     各ファイルは register(api) を持ち、api.checker(章番号) でチェッカーを登録し、api.LABELS に「できていない箇所」の説明を足す。"""
     d = Path(__file__).resolve().parent / "checkers"
     if not d.is_dir(): return
-    api = types.SimpleNamespace(checker=checker, LABELS=LABELS, COMMENTS=COMMENTS, textboxes=textboxes, judge_essay=judge_essay,
+    api = types.SimpleNamespace(checker=checker, label_of=label_of, LABELS=LABELS, COMMENTS=COMMENTS, textboxes=textboxes, judge_essay=judge_essay,
                                 norm_label=norm_label, resolve_label=resolve_label, parse_name=parse_name)
     for p in sorted(d.glob("*.py")):
         if p.name.startswith("_"): continue
@@ -713,9 +722,9 @@ def main():
         except Exception as e:
             g, iss, det = "評価外", [], {"error": str(e)[:80]}
         if not fn_ok: iss = iss + ["FILENAME"]
-        rows.append(base | {"採点結果": g, "できていない箇所": "、".join(LABELS.get(c, c) for c in iss),
+        rows.append(base | {"採点結果": g, "できていない箇所": "、".join(label_of(c) for c in iss),
                             "できていない箇所コード": ";".join(iss)} | det)
-        longrows += [{"学生番号": sid, "氏名": name, "課題": ch, "コード": c, "内容": LABELS.get(c, c)} for c in iss]
+        longrows += [{"学生番号": sid, "氏名": name, "課題": ch, "コード": c.partition("@")[0], "内容": label_of(c)} for c in iss]
     chs_done = Counter(r["課題"] for r in rows if r["課題"] != "")
     base = f"採点結果_第{chs_done.most_common(1)[0][0]}章" if chs_done else "採点結果"
     out = outdir / f"{base}.xlsx"

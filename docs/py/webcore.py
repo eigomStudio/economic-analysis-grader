@@ -117,9 +117,9 @@ def run(in_dir, out_path, ref_path=None, chapter=None):
             grade, iss = "評価外", []; log.append(f"{p.name}: 読み込めませんでした({str(e)[:60]})")
         if not fn_ok: iss = iss + ["FILENAME"]
         rows.append(base | {"採点結果": grade, "できていない箇所コード": ";".join(iss),
-                            "できていない箇所": "、".join(g.LABELS.get(c, c) for c in iss)})
+                            "できていない箇所": "、".join(g.label_of(c) for c in iss)})
     g.LABELS["FILENAME"] = "ファイル名から学生番号または氏名を読み取れない"
-    for r in rows: r["できていない箇所"] = "、".join(g.LABELS.get(c, c) for c in r["できていない箇所コード"].split(";") if c)
+    for r in rows: r["できていない箇所"] = "、".join(g.label_of(c) for c in r["できていない箇所コード"].split(";") if c)
     write_result(out_path, rows)
     return {"version": g.GRADER_VERSION, "count": len(rows), "unsupported": sum(r["採点結果"] == "未対応" for r in rows), "chapter": chapter,
             "grades": dict(Counter(r["採点結果"] for r in rows)), "seconds": round(time.time() - t0, 2), "log": log}
