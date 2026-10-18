@@ -1,10 +1,12 @@
 {
-  "version": "2026-10-13-fc7bae81",
+  "version": "2026-10-18-a494ee1d",
   "wheels": [
     "et_xmlfile-2.0.0-py3-none-any.whl",
     "openpyxl-3.1.5-py2.py3-none-any.whl"
   ],
   "checkers": [
-    "ch02.py"
+    "ch02.py",
+    "ch03.py",
+    "ch04.py"
   ]
 }

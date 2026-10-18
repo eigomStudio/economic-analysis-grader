@@ -1,4 +1,4 @@
-"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-12g(ローカル専用・外部通信なし)。
+"""章末課題の診断・採点補助(Eco-Analysis Grader)  バージョン: 2026-10-18b(ローカル専用・外部通信なし)。
 使い方: python3 grader.py          → フォルダ選択ダイアログが開く(採点 → 採点結果.xlsx)
         python3 grader.py --export  → 確認・修正済みの採点結果.xlsx から、Canvas取り込み用CSVを作る
         python3 grader.py 提出フォルダ [--ref 模範解答フォルダ] [--out 出力先]   → 引数で直接指定
@@ -13,7 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import column_index_from_string as ci, get_column_letter as gl
 
 # ───────── 共通部品 ─────────
-GRADER_VERSION = "2026-10-12g"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
+GRADER_VERSION = "2026-10-18b"                  # 判定ルールを直したら、ここを新しい日付にする(結果のExcelの「集計」シートにも出る)
 FINAL = "最終評価(修正可)"
 COMMENT_COL = "学生向けコメント(修正可)"
 DEFAULT_POINTS = {"S": 4, "A": 3, "B": 2, "C": 1, "D": 0}   # Canvas点数。「Canvas対応表」シートで変更できる
@@ -30,12 +30,34 @@ def make_comment(codes, grade):
         if base in COMMENTS:
             t = COMMENTS[base]
             lines.append(t.replace("{items}", items.replace(",", "・")) if items else re.sub(r"\{items\}[のに]?", "", t))
-    if not lines: return "よくできています。"
-    return "次の点を確認してください。\n" + "\n".join("・" + x for x in lines)
+    notes = [x for x in lines if x.startswith("※")]; lines = [x for x in lines if not x.startswith("※")]   # 「※」で始まるもの(遅延など)は最後に添える
+    head = "次の点を確認してください。\n" + "\n".join("・" + x for x in lines) if lines else "よくできています。"
+    return "\n".join([head] + notes)
 
 def label_of(c):
     base, _, items = c.partition("@")
     return LABELS.get(base, base) + (f"({items.replace(',', '・')})" if items else "")
+
+def chapter_from_path(p):
+    """ファイル名に章がないとき、フォルダ名(「課題2」「第2章」など)から章を読む。"""
+    for part in reversed(Path(p).parts[:-1]):
+        ch = parse_name(part)[2]
+        if ch: return ch
+    return None
+
+def is_late(p):
+    """遅延の提出か: Canvasの一括ダウンロードのファイル名の「late」、または先生が仕分けたフォルダ名の「遅延」。"""
+    p = Path(p)
+    return bool(re.search(r"(?i)(?:^|_)late(?:_|$)", p.stem)) or any("遅延" in part for part in p.parts[:-1])
+
+GRADES_SD = ["S", "A", "B", "C", "D"]
+LABELS_LATE = "提出期限後の提出(評価を1段階下げた)"
+
+def apply_file_late(p, g, iss):
+    """遅延の提出なら、評価を1段階下げ(Dはそのまま)、コメントに注記を足す。(評価, コード, 遅延か)"""
+    if not is_late(p) or g not in GRADES_SD: return g, iss, False
+    g2 = GRADES_SD[min(GRADES_SD.index(g) + 1, 4)]
+    return g2, iss + ([f"LATE@{g}→{g2}"] if g2 != g else []), True
 
 def checker(n):
     def deco(f): CHECKERS[n] = f; return f
@@ -326,6 +348,8 @@ def load_plugins():
 
 # ───────── 実行部(出力はExcel) ─────────
 LABELS["FILENAME"] = "ファイル名から学生番号または氏名を読み取れない"
+LABELS["LATE"] = LABELS_LATE
+COMMENTS["LATE"] = "※提出期限を過ぎてから提出されたため、評価を1段階下げています({items})。"
 GRADES = ["S", "A", "B", "C", "D", "評価外", "未対応"]
 FONT, HFILL = "Meiryo", PatternFill("solid", fgColor="1F3864")
 
@@ -565,6 +589,39 @@ def confirm_dialog(msg):
     out = osa(f'display dialog "{msg}" buttons {{"キャンセル", "送信する"}} default button "キャンセル" with icon caution')
     return bool(out and "送信する" in out)
 
+GRADE_ORDER = ["S", "A", "B", "C", "D"]
+
+def fetch_submissions(base, course, aid, token):
+    """課題の全提出物(遅延かどうか、期限、コメントを含む)をCanvasから取得する。学生ID -> 提出物"""
+    nxt = f"{base}/api/v1/courses/{course}/assignments/{aid}/submissions?include[]=submission_comments&per_page=100"
+    subs = {}
+    while nxt:
+        req = urllib.request.Request(nxt, headers={"Authorization": f"Bearer {token.strip()}"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            for x in json.loads(r.read().decode("utf-8")): subs[str(x.get("user_id"))] = x
+            link = r.headers.get("Link", "")
+        m = re.search(r'<([^>]+)>;\s*rel="next"', link)
+        nxt = m.group(1) if m else None
+    return subs
+
+def late_note(sub):
+    """期限後の提出なら、期限の日時(この端末の時刻帯)の文字列。期限内・未提出なら None。"""
+    if not sub or not sub.get("late"): return None
+    from datetime import datetime
+    due = sub.get("cached_due_date")
+    try:
+        t = datetime.fromisoformat(due.replace("Z", "+00:00")).astimezone()
+        return f"{t.month}月{t.day}日 {t:%H:%M}"
+    except Exception: return ""
+
+def apply_late(g, comment, sub, use_late=True):
+    """遅延の提出は、評価を1段階下げ、その旨をコメントの最後に足す(Dはそのまま)。(評価, コメント, 下げたか)"""
+    due = late_note(sub) if use_late else None
+    if due is None or g not in GRADE_ORDER[:-1]: return g, comment, False
+    g2 = GRADE_ORDER[GRADE_ORDER.index(g) + 1]
+    note = f"※提出期限{f'({due})' if due else ''}を過ぎてから提出されたため、評価を1段階下げています({g}→{g2})。"
+    return g2, (comment + "\n" + note).strip(), True
+
 def post_feedback(a):
     c = prepare_export(a)
     if not c: return
@@ -578,11 +635,16 @@ def post_feedback(a):
     base, course = pc
     sent_path = Path(c["res"]).parent / f"canvas_sent_{aid}.json"
     sent = json.loads(sent_path.read_text(encoding="utf-8")) if sent_path.exists() else {}
-    todo, already = [], 0
+    token = get_token()                               # 遅延の提出を調べるため、確認の段階でも使う(保存はしない)
+    if not token: print("トークンが入力されなかったため中止します"); return
+    try: subs = fetch_submissions(base, course, aid, token)
+    except urllib.error.HTTPError as e: print(f"Canvasから提出状況を取得できませんでした: HTTP {e.code}(トークンやURLを確認してください)"); return
+    todo, already, lates = [], 0, []
     for mi, d in sorted(out_rows):
         uid = students[mi][idcol].strip()
-        val = "" if d["_g"] is None else d["_g"] if a.letters else pts[d["_g"]]
-        comment = str(d.get(COMMENT_COL) or "").strip()
+        g, comment, down = apply_late(d["_g"], str(d.get(COMMENT_COL) or "").strip(), subs.get(uid), not a.no_late and d.get("遅延") != "あり")   # 採点の段階で遅延として下げた学生は、二重に下げない
+        if down: lates.append((uid, d["_g"], g))
+        val = "" if g is None else g if a.letters else pts[g]
         sig = {"grade": str(val), "comment": comment}
         if not a.resend and sent.get(uid) == sig: already += 1; continue
         todo.append((uid, d, sig))
@@ -600,16 +662,19 @@ def post_feedback(a):
         print(f"  例) 学生ID {uid}: 点数 {sig['grade'] or 'なし(コメントのみ)'} / コメント: {sig['comment'][:60].replace(chr(10), ' ')}")
     for uid, d, sig in todo:
         if not sig["grade"]: print(f"  コメントのみ) 学生ID {uid}: {sig['comment'][:60].replace(chr(10), ' ')}")
+    if lates: print(f"  期限後の提出(遅延): {len(lates)} 人 → 評価を1段階下げ、その旨をコメントに書き足して送ります: " + ", ".join(f"学生ID {u}({g0}→{g1})" for u, g0, g1 in lates))
+    if any((x.get("points_deducted") or 0) > 0 for x in subs.values()):
+        print("  ※この課題では、Canvasの遅延ポリシーによる自動減点がかかっています。二重に下がらないよう、成績表の設定で遅延ポリシーの自動減点を切ってください(または --no-late で、このツールの減点を止めてください)。")
     if not a.send:
         print("(確認のみです。実際に送るには --send を付けてください。成績表の公開設定が手動なら、送信後も学生には見えません)"); return
     if not todo: print("送信する学生がいません"); return
     if not a.yes and not confirm_dialog(f"{len(todo)}人の点数とコメントを、Canvasに送信します。よろしいですか?"): print("キャンセルしました"); return
-    token = os.environ.get("CANVAS_TOKEN") or osa('text returned of (display dialog "Canvasのアクセストークンを入力してください(保存されません)" default answer "" with hidden answer)')
-    if not token: print("トークンが入力されなかったため中止します"); return
     ok = ng = 0
     for uid, d, sig in todo:
         body = {"submission[posted_grade]": sig["grade"]} if sig["grade"] else {}      # 評価外はコメントだけ
-        if sig["comment"]: body["comment[text_comment]"] = sig["comment"]
+        prev = (sent.get(uid) or {}).get("comment", "")
+        add = sig["comment"][len(prev):].strip() if prev and sig["comment"].startswith(prev) else sig["comment"]   # 送信済みのコメントに書き足しただけなら、足した部分だけを送る(同じコメントを二重に付けない)
+        if add: body["comment[text_comment]"] = add
         req = urllib.request.Request(f"{base}/api/v1/courses/{course}/assignments/{aid}/submissions/{uid}",
                                      data=urllib.parse.urlencode(body).encode(), method="PUT",
                                      headers={"Authorization": f"Bearer {token.strip()}"})
@@ -641,34 +706,26 @@ def verify_feedback(a):
     base, course = pc
     token = get_token()
     if not token: print("トークンが入力されなかったため中止します"); return
-    nxt = f"{base}/api/v1/courses/{course}/assignments/{aid}/submissions?include[]=submission_comments&per_page=100"
-    subs = {}
-    while nxt:
-        req = urllib.request.Request(nxt, headers={"Authorization": f"Bearer {token.strip()}"})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                for x in json.loads(r.read().decode("utf-8")): subs[str(x.get("user_id"))] = x
-                link = r.headers.get("Link", "")
-        except urllib.error.HTTPError as e:
-            print(f"取得に失敗しました: HTTP {e.code} {e.read()[:150]!r}"); return
-        m = re.search(r'<([^>]+)>;\s*rel="next"', link)
-        nxt = m.group(1) if m else None
+    try: subs = fetch_submissions(base, course, aid, token)
+    except urllib.error.HTTPError as e: print(f"取得に失敗しました: HTTP {e.code} {e.read()[:150]!r}"); return
     flat = lambda t: re.sub(r"\s+", "", str(t or "").replace("\r\n", "\n"))
     res, ng = Counter(), []
     for mi, d in sorted(out_rows):
         uid = students[mi][idcol].strip()
-        val = "" if d["_g"] is None else d["_g"] if a.letters else pts[d["_g"]]
-        want = flat(d.get(COMMENT_COL))
         sub = subs.get(uid)
+        g, comment, _ = apply_late(d["_g"], str(d.get(COMMENT_COL) or "").strip(), sub, not a.no_late and d.get("遅延") != "あり")
+        val = "" if g is None else g if a.letters else pts[g]
+        want = flat(comment)
         who = f"{d.get('学生番号') or ''} {d.get('氏名') or ''}".strip()
         if sub is None: res["提出情報なし"] += 1; ng.append((who, "Canvasに該当する提出情報がありません")); continue
         why = []
-        got = sub.get("grade") if a.letters else sub.get("score")
+        got = sub.get("grade") if a.letters else (sub.get("entered_score") if sub.get("entered_score") is not None else sub.get("score"))   # Canvasの自動減点前の点数
         try: same = (str(got) == str(val)) if a.letters else (got is not None and float(got) == float(val))
         except (TypeError, ValueError): same = False
         if val == "": same = True                          # コメントのみの学生は点数を照合しない
         if not same: why.append(f"点数が違う(期待 {val} / Canvas {got})")
-        if want and not any(flat(x.get("comment")) == want for x in sub.get("submission_comments", [])): why.append("コメントが見つからない")
+        got_c = "".join(flat(x.get("comment")) for x in sub.get("submission_comments", []))        # 書き足しで2つに分かれたコメントもまとめて照合
+        if want and want not in got_c and not all(flat(q) in got_c for q in comment.split("\n※")): why.append("コメントが見つからない")
         if why: res["要確認"] += 1; ng.append((who, "、".join(why)))
         else: res["一致"] += 1
     print(f"照合結果 {len(out_rows)} 人: 一致 {res['一致']} / 要確認 {res['要確認']} / 提出情報なし {res['提出情報なし']}")
@@ -685,6 +742,7 @@ def main():
     ap.add_argument("--post", action="store_true", help="点数とコメントをCanvas APIで送る(--send を付けない限り、確認のみ)")
     ap.add_argument("--verify", action="store_true", help="送った点数・コメントがCanvas上にあるかを照合する")
     ap.add_argument("--send", action="store_true"); ap.add_argument("--yes", action="store_true"); ap.add_argument("--resend", action="store_true")
+    ap.add_argument("--no-late", action="store_true", help="遅延の提出でも評価を下げない(Canvasの遅延ポリシーを使う場合など)")
     ap.add_argument("--url"); ap.add_argument("--limit", type=int); ap.add_argument("--only", help="氏名または学生番号の一部で、送る学生を絞る")
     ap.add_argument("--results"); ap.add_argument("--canvas"); ap.add_argument("--column"); ap.add_argument("--csv-out")
     ap.add_argument("--version", action="version", version=f"Eco-Analysis Grader {GRADER_VERSION}")
@@ -711,7 +769,7 @@ def main():
     files = sorted(p for p in sub.rglob("*.xlsx") if not p.name.startswith(("~$", ".")))
     outdir.mkdir(parents=True, exist_ok=True)
     if a.chapter is None:       # フォルダの章は、ファイル名に章が書かれているものの最頻値から自動で決める
-        found = Counter(parse_name(p.stem)[2] for p in files) - Counter({None: 10**9})
+        found = Counter(parse_name(p.stem)[2] or chapter_from_path(p) for p in files) - Counter({None: 10**9})
         found.pop(None, None)
         if found:
             a.chapter = found.most_common(1)[0][0]
@@ -720,7 +778,7 @@ def main():
             a.chapter = ask_chapter()
     rows, longrows = [], []
     for p in files:
-        sid, name, ch, fn_ok = parse_name(p.stem, a.chapter)
+        sid, name, ch, fn_ok = parse_name(p.stem, chapter_from_path(p) or a.chapter)
         base = {"学生番号": sid, "氏名": name, "課題": ch or "", "ファイル": p.name}
         if ch not in CHECKERS:
             rows.append(base | {"採点結果": "未対応", "できていない箇所": "", "できていない箇所コード": ""}); continue
@@ -729,7 +787,8 @@ def main():
         except Exception as e:
             g, iss, det = "評価外", [], {"error": str(e)[:80]}
         if not fn_ok: iss = iss + ["FILENAME"]
-        rows.append(base | {"採点結果": g, "できていない箇所": "、".join(label_of(c) for c in iss),
+        g, iss, late = apply_file_late(p, g, iss)
+        rows.append(base | {"採点結果": g, "遅延": "あり" if late else "", "できていない箇所": "、".join(label_of(c) for c in iss),
                             "できていない箇所コード": ";".join(iss)} | det)
         longrows += [{"学生番号": sid, "氏名": name, "課題": ch, "コード": c.partition("@")[0], "内容": label_of(c)} for c in iss]
     chs_done = Counter(r["課題"] for r in rows if r["課題"] != "")

@@ -15,7 +15,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 FONT = "Meiryo"
 HFILL = PatternFill("solid", fgColor="1F3864")
 EDIT_FILL = PatternFill("solid", fgColor="BF8F00")
-COLS = ["学生番号", "氏名", "課題", "採点結果", g.FINAL, g.COMMENT_COL, "できていない箇所", "ファイル名"]
+COLS = ["学生番号", "氏名", "課題", "採点結果", g.FINAL, g.COMMENT_COL, "できていない箇所", "ファイル名", "遅延"]
 GRADES = ["S", "A", "B", "C", "D", "評価外", "未対応"]
 
 def _hdr(ws, row, headers, fills=None):
@@ -32,10 +32,10 @@ def write_result(path, rows):
     for r in rows:
         ws.append([r.get("学生番号", ""), r.get("氏名", ""), r.get("課題", ""), r["採点結果"], r["採点結果"],
                    g.make_comment([c for c in str(r.get("できていない箇所コード", "")).split(";") if c], r["採点結果"]),
-                   r.get("できていない箇所", ""), r["ファイル"]])
+                   r.get("できていない箇所", ""), r["ファイル"], r.get("遅延", "")])
     for row in ws.iter_rows(min_row=2):
         for c in row: c.font = Font(name=FONT, size=10); c.alignment = Alignment(wrap_text=True, vertical="top")
-    for i, w in enumerate([12, 14, 6, 10, 14, 55, 60, 40], 1): ws.column_dimensions[gl(i)].width = w
+    for i, w in enumerate([12, 14, 6, 10, 14, 55, 60, 40, 6], 1): ws.column_dimensions[gl(i)].width = w
     ws.freeze_panes = "A2"; ws.auto_filter.ref = ws.dimensions
     last = max(ws.max_row, 2)
     dv = DataValidation(type="list", formula1='"S,A,B,C,D,評価外,未対応"', allow_blank=True)
@@ -102,12 +102,14 @@ def run(in_dir, out_path, ref_path=None, chapter=None):
     if ref_path:
         for n in g.CHECKERS: refs[n] = Path(ref_path)
     if not chapter:
-        found = Counter(g.parse_name(p.stem)[2] for p in files)
+        found = Counter(g.parse_name(p.stem)[2] or g.chapter_from_path(p.relative_to(in_dir)) for p in files)
         found.pop(None, None)
         chapter = found.most_common(1)[0][0] if found else None
+        if not chapter and files:                    # ファイル名から章が分からない → 画面で章番号を尋ねる(採点はしない)
+            return {"need_chapter": True, "count": len(files), "version": g.GRADER_VERSION}
     rows, log = [], []
     for p in files:
-        sid, name, ch, fn_ok = g.parse_name(p.stem, chapter)
+        sid, name, ch, fn_ok = g.parse_name(p.stem, g.chapter_from_path(p.relative_to(in_dir)) or chapter)
         base = {"学生番号": sid, "氏名": name, "課題": ch or "", "ファイル": p.name}
         if ch not in g.CHECKERS:
             rows.append(base | {"採点結果": "未対応", "できていない箇所": "", "できていない箇所コード": ""}); continue
@@ -116,7 +118,8 @@ def run(in_dir, out_path, ref_path=None, chapter=None):
         except Exception as e:
             grade, iss = "評価外", []; log.append(f"{p.name}: 読み込めませんでした({str(e)[:60]})")
         if not fn_ok: iss = iss + ["FILENAME"]
-        rows.append(base | {"採点結果": grade, "できていない箇所コード": ";".join(iss),
+        grade, iss, late = g.apply_file_late(p.relative_to(in_dir), grade, iss)   # ファイル名の「late」、フォルダ名の「遅延」 → 1段階下げる
+        rows.append(base | {"採点結果": grade, "遅延": "あり" if late else "", "できていない箇所コード": ";".join(iss),
                             "できていない箇所": "、".join(g.label_of(c) for c in iss)})
     g.LABELS["FILENAME"] = "ファイル名から学生番号または氏名を読み取れない"
     for r in rows: r["できていない箇所"] = "、".join(g.label_of(c) for c in r["できていない箇所コード"].split(";") if c)

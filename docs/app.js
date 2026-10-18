@@ -43,9 +43,23 @@ function selectedFiles() {
   return all.filter((f) => /\.(xlsx|zip)$/i.test(f.name) && !f.name.startsWith("~$") && !f.name.startsWith("."));
 }
 
+function guessChapter(files) {               // ファイル名・フォルダ名の「課題2」「第2章」から章を推定する(いちばん多いもの)
+  const cnt = {};
+  for (const f of files) {
+    const t = (f.webkitRelativePath || f.name).normalize("NFKC");
+    const m = t.match(/課題\s*(\d+)/) || t.match(/第\s*(\d+)\s*章/);
+    if (m) cnt[m[1]] = (cnt[m[1]] || 0) + 1;
+  }
+  const best = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
+  return best ? best[0] : "";
+}
+
 function updateSelection() {
-  const n = selectedFiles().length;
+  const files = selectedFiles(), n = files.length;
   $("selected").textContent = n ? `${n} 個のファイル(.xlsx / .zip)を選択中` : "ファイルが選ばれていません";
+  const ch = guessChapter(files);
+  if (ch) { $("chapter").value = ch; $("chapter-box").hidden = false; $("chapter-note").textContent = "(ファイル名・フォルダ名から読み取りました)"; }
+  else { $("chapter-note").textContent = ""; }
 }
 $("folder").addEventListener("change", updateSelection);
 $("files").addEventListener("change", updateSelection);
@@ -64,9 +78,10 @@ async function start() {
   running = true; $("run").disabled = true; $("result").hidden = true;
   setStatus(`${files.length} 個のファイルを読み込んでいます…`);
   const items = [], transfer = [];
-  for (const f of files) { const data = await f.arrayBuffer(); items.push({ name: f.name, data }); transfer.push(data); }
+  // フォルダで選んだときは、フォルダ名(課題名・「遅延」)も渡す
+  for (const f of files) { const data = await f.arrayBuffer(); items.push({ name: f.name, path: f.webkitRelativePath || f.name, data }); transfer.push(data); }
   let ref = null;
-  if ($("ref").files[0]) { const f = $("ref").files[0]; const data = await f.arrayBuffer(); ref = { name: f.name, data }; transfer.push(data); }
+  if ($("ref") && $("ref").files[0]) { const f = $("ref").files[0]; const data = await f.arrayBuffer(); ref = { name: f.name, data }; transfer.push(data); }
   const chapter = parseInt($("chapter").value, 10) || 0;
   t0 = performance.now();
   setStatus("採点しています…");
@@ -75,6 +90,12 @@ async function start() {
 
 function showResult(m) {
   const s = m.summary;
+  if (s.need_chapter) {                          // ファイル名から章が分からない → 章番号の欄を出して、入力してもらう
+    running = false; $("run").disabled = false;
+    $("chapter-box").hidden = false; $("chapter-note").textContent = ""; $("chapter").focus();
+    setStatus(`${s.count} 個のファイルの名前から、課題の章番号が分かりませんでした。「課題の章番号」に番号を入力して、もう一度「採点する」を押してください。`);
+    return;
+  }
   const blob = new Blob([m.xlsx], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const a = $("download");
   if (a.dataset.url) URL.revokeObjectURL(a.dataset.url);
@@ -83,6 +104,7 @@ function showResult(m) {
   a.download = s.chapter ? `採点結果_第${s.chapter}章.xlsx` : "採点結果.xlsx";
   const rows = GRADES.filter((g) => s.grades[g]).map((g) => `<tr><th>${g}</th><td>${s.grades[g]}</td></tr>`).join("");
   $("summary").innerHTML = `<p>${s.count} 件を処理しました(第${s.chapter || "?"}章、未対応 ${s.unsupported} 件、${s.seconds} 秒)。<br><span class="small">採点プログラムのバージョン: ${s.version || "不明"}</span></p><table>${rows}</table>`;
+  if (s.chapter) { $("chapter").value = s.chapter; $("chapter-box").hidden = false; }   // 採点に使った章を表示する
   $("log").textContent = (s.log || []).join("\n");
   $("result").hidden = false; $("run").disabled = false; running = false;
   setStatus("採点が終わりました。下のボタンから結果のExcelをダウンロードしてください。");

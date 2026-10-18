@@ -31,11 +31,7 @@
   <p>ファイルを個別に(.xlsx、またはCanvasのZIPのまま): <label class="pick" for="files">ファイルを選択</label><input type="file" id="files" class="hide" accept=".xlsx,.zip" multiple><span class="picked" id="files-name">選択されていません</span></p>
   <p class="small" id="selected">ファイルが選ばれていません</p>
 </fieldset>
-<fieldset>
-  <legend>2. 任意の設定</legend>
-  <p>模範解答のExcel（なくても動きます）: <label class="pick" for="ref">ファイルを選択</label><input type="file" id="ref" class="hide" accept=".xlsx"><span class="picked" id="ref-name">選択されていません</span></p>
-  <p>課題の章番号（ファイル名から分かるときは空欄でかまいません）: <input type="number" id="chapter" min="1" max="30" style="width:5rem"></p>
-</fieldset>
+<p id="chapter-box" hidden><b>課題の章番号:</b> <input type="number" id="chapter" min="1" max="30" style="width:5rem"> <span class="small" id="chapter-note"></span></p>
 
 <p><button id="run">採点する</button></p>
 <div id="status">採点の準備をしています(初回は約14MBを読み込むため、少し時間がかかります)…</div>
@@ -67,7 +63,7 @@
 </script>
 <script type="module" src="./app.js"></script>
 <script>
-for (const id of ["folder", "files", "ref"]) {
+for (const id of ["folder", "files"]) {
   document.getElementById(id).addEventListener("change", (e) => {
     const f = e.target.files, out = document.getElementById(id + "-name");
     out.textContent = !f.length ? "選択されていません" : f.length === 1 ? f[0].name : f.length + " 個のファイル";

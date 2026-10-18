@@ -32,7 +32,7 @@ self.onmessage = async (e) => {
     if (m.type === "run") {
       const job = { files: m.files, ref: m.ref, chapter: m.chapter };
       const res = await self.GraderCore.run(py, job);
-      postMessage({ type: "done", xlsx: res.xlsx, summary: res.summary }, [res.xlsx.buffer]);
+      postMessage({ type: "done", xlsx: res.xlsx, summary: res.summary }, res.xlsx ? [res.xlsx.buffer] : []);
     }
   } catch (err) {
     postMessage({ type: "error", message: String(err && err.message ? err.message : err) });
