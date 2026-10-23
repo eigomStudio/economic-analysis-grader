@@ -28,9 +28,9 @@ shutil.copy2(files["grader.py"], py / "grader.py")
 for name, p in plugins.items(): shutil.copy2(p, py / "checkers" / name)
 for old in (py / "checkers").glob("*.py"):      # ローカルから削除した章のファイルは、Web側からも消す
     if old.name not in plugins: old.unlink(); print("削除:", old.name)
-manual = src / "利用マニュアル.pdf"              # マニュアルのPDFがあれば、Webアプリにもコピーする
-if manual.exists():
-    shutil.copy2(manual, here / "docs" / "manual.pdf"); print("コピーしました: 利用マニュアル.pdf → docs/manual.pdf")
+    manual = src / "利用マニュアル.pdf"              # マニュアルのPDFがあれば、Webアプリにもコピーする
+    if manual.exists():
+        shutil.copy2(manual, here / "docs" / "manual.pdf"); print("コピーしました: 利用マニュアル.pdf → docs/manual.pdf")
 h = hashlib.sha1()
 for name in ["grader.py", "webcore.py"]: h.update((py / name).read_bytes())
 for name in plugins: h.update((py / "checkers" / name).read_bytes())
