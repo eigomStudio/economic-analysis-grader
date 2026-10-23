@@ -30,7 +30,7 @@ for old in (py / "checkers").glob("*.py"):      # ローカルから削除した
     if old.name not in plugins: old.unlink(); print("削除:", old.name)
 manual = src / "利用マニュアル.pdf"              # マニュアルのPDFがあれば、Webアプリにもコピーする
 if manual.exists():
-    shutil.copy2(manual, here / "docs" / "manual.pdf"); print("コピーしました: 利用マニュアル.pdf → docs/    manual.pdf")
+    shutil.copy2(manual, here / "docs" / "manual.pdf"); print("コピーしました: 利用マニュアル.pdf → docs/manual.pdf")
 h = hashlib.sha1()
 for name in ["grader.py", "webcore.py"]: h.update((py / name).read_bytes())
 for name in plugins: h.update((py / "checkers" / name).read_bytes())
